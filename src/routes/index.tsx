@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { USERSCRIPT_SOURCE } from "@/userscript-source";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -13,21 +14,22 @@ export const Route = createFileRoute("/")({
 });
 
 function downloadScript() {
-  fetch("/pokelike-autoplay.user.js")
-    .then((r) => {
-      if (!r.ok) throw new Error("Download failed: " + r.status);
-      return r.blob();
-    })
-    .then((blob) => {
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "pokelike-autoplay.user.js";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(a.href);
-    })
-    .catch((e) => alert(e.message));
+  const blob = new Blob([USERSCRIPT_SOURCE], { type: "text/javascript;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "pokelike-autoplay.user.js";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function copyScript() {
+  navigator.clipboard.writeText(USERSCRIPT_SOURCE).then(
+    () => alert("Userscript copiado! Cole no Tampermonkey → Create new script."),
+    () => alert("Não consegui copiar — use o botão de download."),
+  );
 }
 
 function Index() {
@@ -51,6 +53,12 @@ function Index() {
             className="rounded-lg bg-emerald-500 px-5 py-3 font-semibold text-slate-950 transition hover:bg-emerald-400"
           >
             ⬇ Baixar userscript
+          </button>
+          <button
+            onClick={copyScript}
+            className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-5 py-3 font-medium text-emerald-200 transition hover:bg-emerald-500/20"
+          >
+            📋 Copiar código
           </button>
           <a
             href="https://www.tampermonkey.net/"
