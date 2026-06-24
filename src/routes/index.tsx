@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { USERSCRIPT_SOURCE } from "@/userscript-source";
+// Load the userscript as raw text directly from the source file — single source of truth.
+import USERSCRIPT_SOURCE from "../../public/pokelike-autoplay.user.js?raw";
 
 export const Route = createFileRoute("/")({
   head: () => ({
