@@ -54,6 +54,12 @@ function Index() {
           >
             ⬇ Baixar userscript
           </button>
+          <button
+            onClick={copyScript}
+            className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-5 py-3 font-medium text-emerald-200 transition hover:bg-emerald-500/20"
+          >
+            📋 Copiar código
+          </button>
           <a
             href="https://www.tampermonkey.net/"
             target="_blank"
