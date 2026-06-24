@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Pokelike Auto-Player
 // @namespace    https://lovable.dev/pokelike-autoplay
-// @version      0.2.0
-// @description  Auto-plays pokelike.xyz — battles, evolutions, transitions. Heuristic type-chart AI with resilient DOM fallbacks.
+// @version      0.4.0
+// @description  Auto-plays pokelike.xyz Story mode — type-effectiveness AI with real DOM selectors.
 // @match        https://pokelike.xyz/*
 // @match        https://www.pokelike.xyz/*
 // @grant        GM_setValue
@@ -13,22 +13,20 @@
 (function () {
   "use strict";
 
-  // ---------- Config (persisted) ----------
-  const G = (k, d) => (typeof GM_getValue === "function" ? GM_getValue(k, d) : JSON.parse(localStorage.getItem("pai_" + k) ?? "null") ?? d);
-  const S = (k, v) => { try { typeof GM_setValue === "function" ? GM_setValue(k, v) : localStorage.setItem("pai_" + k, JSON.stringify(v)); } catch (_) {} };
+  const G = (k, d) => { try { return typeof GM_getValue === "function" ? GM_getValue(k, d) : (JSON.parse(localStorage.getItem("pai_" + k)) ?? d); } catch { return d; } };
+  const S = (k, v) => { try { typeof GM_setValue === "function" ? GM_setValue(k, v) : localStorage.setItem("pai_" + k, JSON.stringify(v)); } catch {} };
   const cfg = {
     running: G("running", false),
-    speedMs: G("speedMs", 600),
+    speedMs: G("speedMs", 500),
     debug: G("debug", true),
     evoPreference: G("evoPreference", "last"),
-    stopOnGameOver: G("stopOnGameOver", true),
-    aggressiveClick: G("aggressiveClick", true),
+    autoStartRun: G("autoStartRun", true),
+    region: G("region", "first"), // first unlocked
   };
   const save = (k, v) => { cfg[k] = v; S(k, v); };
-
   const log = (...a) => { if (cfg.debug) console.log("%c[PokelikeAI]", "color:#22c55e;font-weight:bold", ...a); };
 
-  // ---------- Type chart ----------
+  // ---------- Type chart (Gen 6+) ----------
   const T = {
     normal:{rock:.5,ghost:0,steel:.5},
     fire:{fire:.5,water:.5,grass:2,ice:2,bug:2,rock:.5,dragon:.5,steel:2},
@@ -50,288 +48,325 @@
     fairy:{fire:.5,fighting:2,poison:.5,dragon:2,dark:2,steel:.5},
   };
   const TYPES = Object.keys(T);
-  const eff = (atk, defTypes) => {
-    if (!atk || !defTypes?.length) return 1;
-    const row = T[atk] || {};
-    return defTypes.reduce((m, d) => m * (row[d] ?? 1), 1);
-  };
+  const eff = (atk, defTypes) => !atk || !defTypes?.length ? 1 :
+    defTypes.reduce((m, d) => m * ((T[atk] || {})[d] ?? 1), 1);
 
   // ---------- DOM helpers ----------
-  const $all = (sel, root = document) => Array.from(root.querySelectorAll(sel));
-  const visible = (el) => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const vis = (el) => {
     if (!el || !el.getBoundingClientRect) return false;
     const r = el.getBoundingClientRect();
-    if (r.width < 4 || r.height < 4) return false;
-    if (r.bottom < 0 || r.top > innerHeight + 200) return false;
+    if (r.width < 3 || r.height < 3) return false;
     const s = getComputedStyle(el);
-    return s.visibility !== "hidden" && s.display !== "none" && parseFloat(s.opacity) > 0.1 && s.pointerEvents !== "none";
+    return s.visibility !== "hidden" && s.display !== "none" && parseFloat(s.opacity) > 0.05 && s.pointerEvents !== "none";
   };
-  const clickable = () => $all('button, a, [role="button"], [class*="btn"], [class*="Button"]').filter(visible);
-  const byText = (texts, root) => {
-    const wanted = (Array.isArray(texts) ? texts : [texts]).map(t => t.toLowerCase().trim());
-    return (root ? $all('button,a,[role="button"],div,span', root) : clickable()).filter(el => {
-      if (!visible(el)) return false;
-      const t = (el.innerText || el.textContent || "").toLowerCase().trim();
-      if (!t || t.length > 60) return false;
-      return wanted.some(w => t === w || t.split("\n").some(line => line.trim() === w) || (w.length > 3 && t.includes(w)));
-    });
-  };
-  const realClick = (el) => {
+  const click = (el) => {
     if (!el) return false;
     try {
-      el.scrollIntoView({block:"center", behavior:"instant"});
+      el.scrollIntoView({ block: "center", behavior: "instant" });
       const r = el.getBoundingClientRect();
-      const x = r.left + r.width/2, y = r.top + r.height/2;
-      const opts = {bubbles:true, cancelable:true, composed:true, clientX:x, clientY:y, button:0, view:window};
-      el.dispatchEvent(new PointerEvent("pointerdown", {...opts, pointerType:"mouse"}));
+      const x = r.left + r.width / 2, y = r.top + r.height / 2;
+      const opts = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 0, view: window };
+      el.dispatchEvent(new PointerEvent("pointerdown", { ...opts, pointerType: "mouse", pointerId: 1 }));
       el.dispatchEvent(new MouseEvent("mousedown", opts));
-      el.dispatchEvent(new PointerEvent("pointerup", {...opts, pointerType:"mouse"}));
+      el.dispatchEvent(new PointerEvent("pointerup", { ...opts, pointerType: "mouse", pointerId: 1 }));
       el.dispatchEvent(new MouseEvent("mouseup", opts));
       el.dispatchEvent(new MouseEvent("click", opts));
       el.click?.();
       return true;
-    } catch(e) { console.warn("[PokelikeAI] click failed", e); return false; }
+    } catch (e) { console.warn("[PokelikeAI] click error", e); return false; }
   };
-  const clickFirst = (texts) => {
-    const els = byText(texts);
-    if (els.length) { log("→ click:", texts[0] || texts, els[0].innerText?.slice(0,30)); return realClick(els[0]); }
-    return false;
-  };
-  const pageText = () => (document.body.innerText || "").toLowerCase();
+  const visText = (sel) => $$(sel).filter(vis);
+  const findByText = (sel, regex) => visText(sel).find(e => regex.test((e.innerText || "").trim()));
 
-  // ---------- State detection ----------
+  // Extract type names from a container by reading .type-badge classes
+  const typesIn = (el) => {
+    if (!el) return [];
+    const out = new Set();
+    $$(".type-badge", el).forEach(b => {
+      for (const cls of b.classList) {
+        const m = /^type-(\w+)$/.exec(cls);
+        if (m && TYPES.includes(m[1])) out.add(m[1]);
+      }
+    });
+    return [...out];
+  };
+
+  // ---------- Game state detection ----------
   function detectState() {
-    const txt = pageText();
-    if (/you are the\s*champion/i.test(txt)) return "victory";
-    if (/game over/i.test(txt) && byText(["play again", "main menu"]).length) return "gameover";
-    if (/choose its evolution/i.test(txt)) return "evolution";
-    if (/choose your order/i.test(txt) || byText(["fight!"]).length) return "order";
-    if (/wild battle/i.test(txt)) return "battle-intro";
-    if (byText(["keep team as-is", "decline", "accept"]).length) return "offer";
-    if (byText(["next map", "next map →"]).length) return "transition";
-    if (byText(["continue"]).length) return "transition";
-    if (byText(["skip", "skip (flee)"]).length && !looksLikeBattle()) return "transition";
-    if (looksLikeBattle()) return "battle";
-    if (byText(["enter", "play story", "resume story"]).length) return "menu";
+    if (visText(".game-over, [class*=gameover i]").length || findByText("h1,h2,div", /game over/i)) return "gameover";
+    if (findByText("h1,h2,div", /champion|you win|victory/i)) return "victory";
+    if (visText(".title-mode-card--story").length) return "title";
+    if (visText(".history-region-btn").length) return "region-select";
+    if (visText(".trainer-card").length) return "trainer-select";
+
+    // In battle: there are .poke-move buttons that are clickable AND an enemy panel
+    const moves = visText(".poke-move");
+    if (moves.length >= 1) {
+      // Could be starter selection (3 .poke-card with moves but no enemy)
+      // Starter screen: 3 poke-cards, no map/battle context
+      const pokeCards = visText(".poke-card");
+      if (pokeCards.length === 3 && !visText("[class*=enemy], [class*=opponent], [class*=foe]").length && !visText("[class*=battle-]").length) {
+        return "starter-select";
+      }
+      return "battle";
+    }
+
+    if (visText("[class*=evolution], [class*=evolve]").length) return "evolution";
+    if (visText("[class*=map-node], [class*=encounter], [class*=route]").length) return "map";
     return "idle";
-  }
-  function looksLikeBattle() {
-    // Battle UI: usually shows HP bars, 4 move buttons, "Skip" button, your team vs enemy
-    const hasHP = /\bhp\b/i.test(document.body.innerText) || $all("[class*=hp i], [class*=health i]").some(visible);
-    const moves = findMoveButtons();
-    return hasHP && moves.length >= 2;
   }
 
   // ---------- Battle parsing ----------
-  function findMoveButtons() {
-    // Heuristic: find a horizontal/grid group of 2-4 small buttons near the bottom containing type words or short attack names
-    const btns = clickable().filter(el => {
-      const t = (el.innerText || "").trim();
-      if (!t || t.length > 40) return false;
-      if (/^(skip|fight|continue|next|back|main menu|play again|accept|decline|share|🗼|📤|🏛️)/i.test(t)) return false;
-      return true;
-    });
-    // Score: contains a type name, or appears in bottom half, or has short title-cased first line
-    const scored = btns.map(el => {
-      const t = (el.innerText || "").toLowerCase();
-      const r = el.getBoundingClientRect();
-      let s = 0;
-      if (TYPES.some(tp => new RegExp(`\\b${tp}\\b`).test(t))) s += 3;
-      if (/\bpower\b|\bpp\b/.test(t)) s += 2;
-      if (r.top > innerHeight * 0.5) s += 1;
-      const first = (el.innerText || "").split("\n")[0].trim();
-      if (/^[A-Z][a-zA-Z' -]{2,20}$/.test(first)) s += 1;
-      return {el, s, t};
-    }).filter(x => x.s > 0);
-    // Group siblings: take the 4 highest-scored siblings under a common parent
-    if (scored.length >= 2) {
-      const byParent = new Map();
-      for (const x of scored) {
-        const p = x.el.parentElement;
-        if (!p) continue;
-        if (!byParent.has(p)) byParent.set(p, []);
-        byParent.get(p).push(x);
+  function findEnemy() {
+    // Try common enemy wrapper classes
+    const sels = [".enemy", ".opponent", ".foe", "[class*=enemy]", "[class*=opponent]", "[class*=foe]"];
+    for (const s of sels) {
+      const el = visText(s)[0];
+      if (el) {
+        const card = el.matches(".poke-card") ? el : el.querySelector(".poke-card") || el;
+        return card;
       }
-      let best = [];
-      for (const arr of byParent.values()) if (arr.length > best.length) best = arr;
-      if (best.length >= 2) return best.sort((a,b)=>b.s-a.s).slice(0,6).map(x=>x.el);
     }
-    return scored.slice(0, 4).map(x => x.el);
+    // Fallback: poke-card not inside our team area; top half of viewport
+    const cards = visText(".poke-card");
+    const above = cards.filter(c => c.getBoundingClientRect().top < innerHeight / 2);
+    return above[0] || null;
   }
 
-  function extractMove(el) {
-    const raw = el.innerText || "";
-    const lower = raw.toLowerCase();
+  function parseMove(el) {
+    const name = ($(".move-name", el)?.innerText || el.innerText || "").trim().split("\n")[0];
+    const typeBadge = $(".type-badge", el);
     let type = null;
-    for (const tp of TYPES) if (new RegExp(`\\b${tp}\\b`).test(lower)) { type = tp; break; }
-    const pw = lower.match(/power[:\s]*([0-9]+)/);
-    const power = pw ? parseInt(pw[1], 10) : 60;
-    const acc = lower.match(/acc(?:uracy)?[:\s]*([0-9]+)/);
-    const accuracy = acc ? parseInt(acc[1], 10) / 100 : 1;
-    return {type, power, accuracy, name: raw.split("\n")[0].trim()};
+    if (typeBadge) {
+      for (const c of typeBadge.classList) {
+        const m = /^type-(\w+)$/.exec(c);
+        if (m && TYPES.includes(m[1])) { type = m[1]; break; }
+      }
+    }
+    const pwrText = $(".move-power-badge", el)?.innerText || "";
+    const pw = pwrText.match(/(\d+)/);
+    const power = pw ? parseInt(pw[1], 10) : 50;
+    const disabled = el.matches("[disabled], .disabled, [class*=disabled]") || el.getAttribute("aria-disabled") === "true";
+    return { el, name, type, power, disabled };
   }
 
-  function readEnemyTypes() {
-    // Find element/section labeled "Enemy" and scan its descendants for type words
-    const labels = $all("body *").filter(el => {
-      if (!visible(el)) return false;
-      const t = (el.textContent || "").trim().toLowerCase();
-      return t === "enemy" || t === "opponent";
-    });
-    let scope = labels[0]?.parentElement || labels[0]?.closest("section,div") || null;
-    // Walk up a couple levels to capture the panel
-    if (scope) for (let i = 0; i < 2 && scope.parentElement; i++) scope = scope.parentElement;
-    const txt = (scope?.innerText || document.body.innerText || "").toLowerCase();
-    const found = new Set();
-    for (const tp of TYPES) if (new RegExp(`\\b${tp}\\b`).test(txt)) found.add(tp);
-    // If we found too many (whole page), restrict
-    if (found.size > 3 && scope === document.body) return [];
-    return [...found].slice(0, 2);
-  }
-
-  function pickMove(moves, enemyTypes) {
-    const scored = moves.map(el => {
-      const m = extractMove(el);
+  function pickMove() {
+    const enemy = findEnemy();
+    const enemyTypes = typesIn(enemy);
+    const moves = visText(".poke-move").map(parseMove).filter(m => !m.disabled);
+    if (!moves.length) return null;
+    const scored = moves.map(m => {
       const e = m.type ? eff(m.type, enemyTypes) : 1;
-      const score = m.power * (e || 0.1) * m.accuracy;
-      return {el, m, e, score};
-    }).sort((a,b)=>b.score-a.score);
-    return scored;
+      // STAB approximation: if our active pokemon shares move type (lookup our card too)
+      return { ...m, eff: e, score: (m.power || 40) * (e || 0.1) };
+    }).sort((a, b) => b.score - a.score);
+    log("battle | enemy:", enemyTypes, "| moves:", scored.map(s => `${s.name}(${s.type},p${s.power},x${s.eff})=${s.score.toFixed(0)}`).join(" | "));
+    return scored[0];
   }
 
-  // ---------- Loop ----------
-  let failCount = 0, ticks = 0, battlesWon = 0, lastState = "";
+  // ---------- Main loop ----------
+  let failCount = 0, ticks = 0, battles = 0, lastState = "", lastAction = "";
+
   function step() {
     if (!cfg.running) return;
     ticks++;
     let acted = false;
     try {
       const state = detectState();
-      if (state !== lastState) { log("state:", state); lastState = state; updateHud(); }
+      if (state !== lastState) { log("→ state:", state); lastState = state; updateHud(); }
 
       switch (state) {
-        case "victory":
-          save("running", false); updateHud(); log("🏆 Champion!");
-          return;
         case "gameover":
-          if (cfg.stopOnGameOver) { save("running", false); updateHud(); log("⛔ Game Over — parado."); return; }
-          acted = clickFirst(["play again"]);
-          break;
-        case "menu":
-          acted = clickFirst(["resume story"]) || clickFirst(["play story"]) || clickFirst(["enter"]);
-          break;
-        case "order":
-          acted = clickFirst(["fight!"]) || clickFirst(["fight"]);
-          break;
-        case "evolution": {
-          const opts = clickable().filter(el => el.querySelector("img") && (el.innerText||"").length < 40);
-          if (opts.length) {
-            const pick = cfg.evoPreference === "last" ? opts[opts.length-1]
-                       : cfg.evoPreference === "random" ? opts[Math.floor(Math.random()*opts.length)]
-                       : opts[0];
-            acted = realClick(pick); log("evolve:", pick.innerText?.slice(0,20));
+        case "victory":
+          save("running", false); updateHud();
+          log(state === "victory" ? "🏆 Vitória!" : "⛔ Game over.");
+          return;
+
+        case "title":
+          if (cfg.autoStartRun) {
+            // Try resume first, else play
+            acted = click(visText(".title-mode-resume--story")[0]) || click(visText(".title-mode-card--story")[0]);
           }
           break;
-        }
-        case "battle-intro":
-          acted = clickFirst(["continue"]) || clickFirst(["skip"]);
+
+        case "region-select": {
+          // pick classic mode if visible
+          const classic = visText(".history-mode-btn--classic.active, .history-mode-btn--classic")[0];
+          if (classic && !classic.className.includes("active")) { click(classic); acted = true; break; }
+          const region = visText(".history-region-btn").find(r => !r.className.includes("locked"));
+          if (region) { acted = click(region); }
           break;
+        }
+
+        case "trainer-select":
+          acted = click(visText(".trainer-card")[0]);
+          break;
+
+        case "starter-select": {
+          // Pick the starter with best move power (simple heuristic)
+          const cards = visText(".poke-card");
+          let best = cards[0], bestScore = -1;
+          for (const c of cards) {
+            const mv = $(".poke-move", c);
+            if (!mv) continue;
+            const p = parseMove(mv);
+            if (p.power > bestScore) { bestScore = p.power; best = c; }
+          }
+          acted = click(best);
+          break;
+        }
+
         case "battle": {
-          const moves = findMoveButtons();
-          const enemyTypes = readEnemyTypes();
-          if (moves.length) {
-            const scored = pickMove(moves, enemyTypes);
-            log("battle:", {enemyTypes, options: scored.map(s=>({n:s.m.name,t:s.m.type,p:s.m.power,e:s.e,s:s.score.toFixed(1)}))});
-            acted = realClick(scored[0].el);
-            if (acted) battlesWon += 0; // we'll count via transitions
+          const m = pickMove();
+          if (m) { acted = click(m.el); lastAction = `move: ${m.name}`; }
+          break;
+        }
+
+        case "evolution": {
+          const opts = visText("[class*=evolution-option], [class*=evolve-option], .poke-card").filter(e => e.querySelector("img"));
+          if (opts.length) {
+            const idx = cfg.evoPreference === "last" ? opts.length - 1
+                     : cfg.evoPreference === "random" ? Math.floor(Math.random() * opts.length) : 0;
+            acted = click(opts[idx]);
           } else {
-            acted = clickFirst(["fight"]) || clickFirst(["continue"]);
+            acted = click(findByText("button", /accept|evolve|confirm|yes/i));
           }
           break;
         }
-        case "offer":
-          acted = clickFirst(["accept"]) || clickFirst(["keep team as-is"]) || clickFirst(["decline"]);
+
+        case "map": {
+          // Click first available map node
+          const nodes = visText("[class*=map-node]:not([class*=locked]):not([class*=disabled]):not([class*=cleared]), [class*=encounter]:not([class*=locked])");
+          acted = click(nodes[0]);
           break;
-        case "transition":
-          if (clickFirst(["continue"])) { acted = true; }
-          else if (clickFirst(["next map"])) { acted = true; battlesWon++; updateHud(); }
-          else if (clickFirst(["skip"])) acted = true;
-          break;
-        default:
-          if (cfg.aggressiveClick) {
-            // last resort: try common labels
-            acted = clickFirst(["continue"]) || clickFirst(["next"]) || clickFirst(["ok"]) || clickFirst(["close"]);
+        }
+
+        default: {
+          // Generic: continue/next/ok/confirm/skip/accept buttons — but NEVER side-menu, dex, settings
+          const safe = visText("button, [role=button]").filter(b => {
+            const cls = b.className || "";
+            if (/run-menu|dex-|nav-|btn-icon-close|history-select-logo|run-menu-link|title-footer/.test(cls)) return false;
+            const t = (b.innerText || "").trim();
+            return /^(continue|next|ok|confirm|accept|skip|start|begin|fight|reward|claim|done|finish)$/i.test(t);
+          });
+          acted = click(safe[0]);
+          // If still nothing, try a primary action button at the bottom that isn't menu
+          if (!acted) {
+            const primaries = visText(".btn-primary").filter(b => {
+              const cls = b.className || "";
+              return !/run-menu|dex-|nav-|btn-icon-close|run-menu-link|title-footer|history-mode-btn|history-region-btn/.test(cls)
+                  && (b.innerText || "").trim().length > 0
+                  && (b.innerText || "").trim().length < 30;
+            });
+            // Only auto-click if there's exactly one obvious primary
+            if (primaries.length === 1) acted = click(primaries[0]);
           }
+        }
       }
 
-      if (acted) failCount = 0;
-      else {
+      if (acted) {
+        failCount = 0;
+        if (state === "map" || lastAction.startsWith("move")) battles++;
+      } else {
         failCount++;
-        if (failCount === 5) log("⚠ 5 ticks sem ação — estado:", state, "| visíveis:", clickable().slice(0,8).map(b=>b.innerText?.slice(0,20)));
-        if (failCount >= 12) {
+        if (failCount === 6) {
+          log("⚠ 6 ticks sem ação. Estado:", state, "| botões visíveis:",
+            visText("button").slice(0, 12).map(b => (b.innerText || "").trim().slice(0, 30)));
+        }
+        if (failCount >= 20) {
           save("running", false); updateHud();
-          log("⏸ Parado: 12 ticks sem encontrar botão. Cole os logs acima para eu ajustar os seletores.");
+          log("⏸ Parado: 20 ticks ociosos. Cole os logs para ajustar seletores.");
           return;
         }
       }
-    } catch (e) {
-      console.error("[PokelikeAI] step error:", e);
-      failCount++;
-    }
+    } catch (e) { console.error("[PokelikeAI]", e); failCount++; }
+    updateHudStats();
     setTimeout(step, cfg.speedMs);
   }
 
   // ---------- HUD ----------
-  let hud;
+  let hud, statsEl;
   function buildHud() {
+    if (document.getElementById("pokelike-ai-hud")) return;
     hud = document.createElement("div");
     hud.id = "pokelike-ai-hud";
-    hud.style.cssText = `position:fixed;z-index:2147483647;bottom:16px;right:16px;background:#0f172a;color:#e2e8f0;font:13px/1.4 system-ui,-apple-system,sans-serif;border:1px solid #22c55e;border-radius:12px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.5);min-width:250px;user-select:none`;
+    hud.style.cssText = "position:fixed;z-index:2147483647;bottom:14px;right:14px;background:#0f172a;color:#e2e8f0;font:13px/1.4 system-ui,sans-serif;border:1px solid #22c55e;border-radius:12px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,.6);min-width:260px;user-select:none";
     document.body.appendChild(hud);
-    updateHud();
+    renderHud();
   }
-  function updateHud() {
+  function renderHud() {
     if (!hud) return;
     hud.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <span style="width:10px;height:10px;border-radius:50%;background:${cfg.running?"#22c55e":"#ef4444"};box-shadow:0 0 8px ${cfg.running?"#22c55e":"#ef4444"}"></span>
+        <span id="pai-led" style="width:10px;height:10px;border-radius:50%;background:${cfg.running?"#22c55e":"#ef4444"};box-shadow:0 0 8px ${cfg.running?"#22c55e":"#ef4444"}"></span>
         <strong style="flex:1">Pokelike Auto-Player</strong>
-        <span style="font-size:11px;opacity:.6">v0.2</span>
+        <span style="font-size:11px;opacity:.6">v0.4</span>
       </div>
-      <button id="pai-toggle" style="width:100%;padding:8px;border:0;border-radius:8px;cursor:pointer;font-weight:600;background:${cfg.running?"#ef4444":"#22c55e"};color:#0f172a">
+      <button id="pai-toggle" style="width:100%;padding:8px;border:0;border-radius:8px;cursor:pointer;font-weight:700;background:${cfg.running?"#ef4444":"#22c55e"};color:#0f172a">
         ${cfg.running?"⏸ Stop":"▶ Start"}
       </button>
       <div style="margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;font-size:12px">
         <label>Speed</label>
-        <input id="pai-speed" type="range" min="200" max="2500" step="100" value="${cfg.speedMs}" style="width:100%">
+        <input id="pai-speed" type="range" min="150" max="2000" step="50" value="${cfg.speedMs}" style="width:100%">
         <label>Evolution</label>
         <select id="pai-evo" style="background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:2px 6px">
           <option value="first" ${cfg.evoPreference==="first"?"selected":""}>First</option>
           <option value="last" ${cfg.evoPreference==="last"?"selected":""}>Last (final form)</option>
           <option value="random" ${cfg.evoPreference==="random"?"selected":""}>Random</option>
         </select>
+        <label>Auto start</label>
+        <input id="pai-auto" type="checkbox" ${cfg.autoStartRun?"checked":""}>
         <label>Debug</label>
         <input id="pai-debug" type="checkbox" ${cfg.debug?"checked":""}>
-        <label>Stop on death</label>
-        <input id="pai-stop" type="checkbox" ${cfg.stopOnGameOver?"checked":""}>
       </div>
-      <div style="margin-top:8px;font-size:11px;opacity:.7">${cfg.speedMs}ms · maps: ${battlesWon} · state: ${lastState||"-"}</div>
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <button id="pai-diag" style="flex:1;padding:5px;border:1px solid #475569;border-radius:6px;background:#1e293b;color:#e2e8f0;cursor:pointer;font-size:11px">🔍 Diagnose</button>
+      </div>
+      <div id="pai-stats" style="margin-top:8px;font-size:11px;opacity:.75">${cfg.speedMs}ms · state: - · actions: 0</div>
     `;
+    statsEl = hud.querySelector("#pai-stats");
     hud.querySelector("#pai-toggle").onclick = () => {
-      save("running", !cfg.running); updateHud();
-      if (cfg.running) { failCount = 0; step(); }
+      save("running", !cfg.running); renderHud();
+      if (cfg.running) { failCount = 0; setTimeout(step, 100); }
     };
-    hud.querySelector("#pai-speed").oninput = (e) => { save("speedMs", +e.target.value); };
-    hud.querySelector("#pai-evo").onchange = (e) => save("evoPreference", e.target.value);
-    hud.querySelector("#pai-debug").onchange = (e) => save("debug", e.target.checked);
-    hud.querySelector("#pai-stop").onchange = (e) => save("stopOnGameOver", e.target.checked);
+    hud.querySelector("#pai-speed").oninput = e => { save("speedMs", +e.target.value); updateHudStats(); };
+    hud.querySelector("#pai-evo").onchange = e => save("evoPreference", e.target.value);
+    hud.querySelector("#pai-auto").onchange = e => save("autoStartRun", e.target.checked);
+    hud.querySelector("#pai-debug").onchange = e => save("debug", e.target.checked);
+    hud.querySelector("#pai-diag").onclick = () => {
+      const state = detectState();
+      const moves = visText(".poke-move").map(parseMove);
+      const enemy = findEnemy();
+      console.log("%c[PokelikeAI DIAGNOSE]", "color:#facc15;font-weight:bold", {
+        state, url: location.href,
+        moves, enemyTypes: typesIn(enemy),
+        visibleButtons: visText("button").slice(0,20).map(b => (b.innerText||"").trim().slice(0,40)).filter(Boolean),
+        pokeCards: visText(".poke-card").length,
+        url2: location.pathname,
+      });
+      alert("Diagnose logged to console (F12). State: " + state);
+    };
+  }
+  function updateHud() { renderHud(); }
+  function updateHudStats() {
+    if (!statsEl) return;
+    statsEl.textContent = `${cfg.speedMs}ms · state: ${lastState||"-"} · ticks: ${ticks} · battles: ${battles}`;
+    const led = hud.querySelector("#pai-led");
+    if (led) { led.style.background = cfg.running ? "#22c55e" : "#ef4444"; led.style.boxShadow = `0 0 8px ${cfg.running?"#22c55e":"#ef4444"}`; }
+    const tog = hud.querySelector("#pai-toggle");
+    if (tog) { tog.textContent = cfg.running ? "⏸ Stop" : "▶ Start"; tog.style.background = cfg.running ? "#ef4444" : "#22c55e"; }
   }
 
   const boot = () => {
     buildHud();
-    if (cfg.running) { failCount = 0; step(); }
-    log("Carregado. Clique ▶ Start no HUD.");
+    if (cfg.running) { failCount = 0; setTimeout(step, 500); }
+    log("Carregado v0.4. Clique ▶ Start. Use 🔍 Diagnose para debug.");
   };
   if (document.readyState === "complete") boot();
   else window.addEventListener("load", boot);
+
+  // Re-attach HUD if React unmounts body (rare)
+  setInterval(() => { if (!document.getElementById("pokelike-ai-hud")) buildHud(); }, 3000);
 })();
