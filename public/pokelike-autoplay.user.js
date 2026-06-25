@@ -1060,7 +1060,7 @@
       }
 
       switch (state) {
-        case "gameover":
+        case "gameover": {
           if (currentRun.startTime) {
             currentRun.result = "defeat";
             currentRun.battles = battles;
@@ -1068,10 +1068,23 @@
             memory.addRun(currentRun);
             memory.analyzeAndLearn();
           }
+          // Try to restart if autoStartRun
+          if (cfg.autoStartRun) {
+            const playAgain = [...document.querySelectorAll("button")].filter(vis).find(b => /PLAY AGAIN/i.test((b.innerText || "").trim()));
+            if (playAgain) {
+              click(playAgain);
+              currentRun = { starter: null, region: cfg.region, startTime: Date.now() };
+              battles = 0;
+              failCount = 0;
+              log("result", "DEFEAT — restarting via PLAY AGAIN");
+              break;
+            }
+          }
           save("running", false);
           updateDashboard();
           log("result", "DEFEAT — run saved, learning updated");
           return;
+        }
 
         case "victory":
           if (currentRun.startTime) {
