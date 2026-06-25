@@ -165,18 +165,21 @@
     try {
       el.scrollIntoView({ block: "center", behavior: "instant" });
       const r = el.getBoundingClientRect();
-      if (r.width < 1 || r.height < 1) { log("click", "element has no size"); return false; }
-      const x = r.left + r.width / 2, y = r.top + r.height / 2;
-      const opts = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 0, view: window };
-      el.dispatchEvent(new PointerEvent("pointerdown", { ...opts, pointerType: "mouse", pointerId: 1 }));
-      el.dispatchEvent(new MouseEvent("mousedown", opts));
-      el.dispatchEvent(new PointerEvent("pointerup", { ...opts, pointerType: "mouse", pointerId: 1 }));
-      el.dispatchEvent(new MouseEvent("mouseup", opts));
-      el.dispatchEvent(new MouseEvent("click", opts));
-      el.click?.();
-      log("click", `clicked ${el.tagName}.${el.className?.split(" ")[0]} at ${Math.round(x)},${Math.round(y)}`);
+      if (r.width < 1 || r.height < 1) return false;
+      // Use native .click() first — works with React event delegation
+      el.click();
+      // Also try synthetic events as backup (may fail in Tampermonkey sandbox)
+      try {
+        const x = r.left + r.width / 2, y = r.top + r.height / 2;
+        const opts = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 0, view: window };
+        el.dispatchEvent(new PointerEvent("pointerdown", { ...opts, pointerType: "mouse", pointerId: 1 }));
+        el.dispatchEvent(new MouseEvent("mousedown", opts));
+        el.dispatchEvent(new PointerEvent("pointerup", { ...opts, pointerType: "mouse", pointerId: 1 }));
+        el.dispatchEvent(new MouseEvent("mouseup", opts));
+        el.dispatchEvent(new MouseEvent("click", opts));
+      } catch (_) { /* sandbox may lack PointerEvent — .click() above is enough */ }
       return true;
-    } catch (e) { log("click", `error: ${e.message}`); return false; }
+    } catch (e) { return false; }
   };
 
   const visText = (sel) => $$(sel).filter(vis);
@@ -1036,11 +1039,7 @@
               currentRun = { starter: null, region: cfg.region, startTime: Date.now() };
               battles = 0;
             }
-            const resumeBtn = visText(".title-mode-resume--story")[0];
-            const storyBtn = visText(".title-mode-card--story")[0];
-            log("title", `resume=${!!resumeBtn} story=${!!storyBtn} autoStart=${cfg.autoStartRun}`);
-            acted = click(resumeBtn) || click(storyBtn);
-            log("title", `acted=${acted}`);
+            acted = click(visText(".title-mode-resume--story")[0]) || click(visText(".title-mode-card--story")[0]);
           }
           break;
 
