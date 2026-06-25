@@ -1030,8 +1030,10 @@
 
         case "title":
           if (cfg.autoStartRun) {
-            currentRun = { starter: null, region: cfg.region, startTime: Date.now() };
-            battles = 0;
+            if (!currentRun.startTime) {
+              currentRun = { starter: null, region: cfg.region, startTime: Date.now() };
+              battles = 0;
+            }
             acted = click(visText(".title-mode-resume--story")[0]) || click(visText(".title-mode-card--story")[0]);
           }
           break;
