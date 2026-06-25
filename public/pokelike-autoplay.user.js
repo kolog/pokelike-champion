@@ -198,53 +198,69 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   function detectState() {
-    // Game over / Victory
-    if (visText(".game-over, [class*=gameover i]").length || findByText("h1,h2,div", /game over/i)) return "gameover";
-    if (findByText("h1,h2,div", /champion|you win|victory/i)) return "victory";
-
-    // Title screen
+    // Priority 1: Title screen (most specific selector)
     if (visText(".title-mode-card--story").length) return "title";
 
-    // Region select
+    // Priority 2: Region select
     if (visText(".history-region-btn").length) return "region-select";
 
-    // Trainer select
+    // Priority 3: Trainer select
     if (visText(".trainer-card").length) return "trainer-select";
 
-    // Battle — has .poke-move buttons AND an enemy
+    // Priority 4: Starter select — 3 poke-cards with moves, no enemy, no battle UI
+    const pokeCards = visText(".poke-card");
     const moves = visText(".poke-move");
-    if (moves.length >= 1) {
-      // Starter select: 3 poke-cards with moves, no enemy
-      const pokeCards = visText(".poke-card");
-      if (pokeCards.length === 3 && !visText("[class*=enemy], [class*=opponent], [class*=foe]").length && !visText("[class*=battle-]").length) {
+    if (pokeCards.length === 3 && moves.length >= 1) {
+      const hasEnemy = visText("[class*=enemy], [class*=opponent], [class*=foe]").length > 0;
+      const hasBattleUI = visText("[class*=battle-hud], [class*=battle-ui], [class*=battle-menu]").length > 0;
+      if (!hasEnemy && !hasBattleUI) {
         return "starter-select";
       }
-      return "battle";
     }
 
-    // Evolution
+    // Priority 5: Battle — has .poke-move buttons AND an enemy present
+    if (moves.length >= 1) {
+      const hasEnemy = visText("[class*=enemy], [class*=opponent], [class*=foe]").length > 0;
+      if (hasEnemy) return "battle";
+    }
+
+    // Priority 6: Evolution
     if (visText("[class*=evolution], [class*=evolve]").length) return "evolution";
 
-    // Map
+    // Priority 7: Map
     if (visText("[class*=map-node], [class*=encounter], [class*=route]").length) return "map";
 
-    // Shop
-    if (findByText("h1,h2,h3,div,span", /shop|loja|buy|comprar/i) && visText("button").length > 2) return "shop";
+    // Priority 8: Shop
+    if (visText(".shop-item, [class*=shop-card], [class*=shop] [class*=item]").length) return "shop";
 
-    // Heal
-    if (findByText("h1,h2,h3,div,span", /heal|cura|recover/i) && !visText(".poke-move").length) return "heal";
+    // Priority 9: Heal
+    if (visText(".heal-node, [class*=heal], [class*=pokemon-center]").length) return "heal";
 
-    // Trade
-    if (findByText("h1,h2,h3,div,span", /trade|troca|swap/i) && !visText(".poke-move").length) return "trade";
+    // Priority 10: Trade
+    if (visText(".trade-node, [class*=trade], [class*=swap]").length) return "trade";
 
-    // Reward
-    if (findByText("h1,h2,h3,div,span", /reward|recompensa|prize|loot/i)) return "reward";
+    // Priority 11: Reward
+    if (visText(".reward-card, [class*=reward], [class*=loot]").length) return "reward";
 
-    // Item select
-    if (findByText("h1,h2,h3,div,span", /choose.*item|select.*item|escolha.*item/i)) return "item-select";
+    // Priority 12: Item select
+    if (visText(".item-option, [class*=item-select], [class*=item-choice]").length) return "item-select";
 
-    // Pokemon select
-    if (findByText("h1,h2,h3,div,span", /choose.*pokemon|select.*pokemon|escolha.*pokemon/i)) return "pokemon-select";
+    // Priority 13: Pokemon select
+    if (visText(".pokemon-option, [class*=pokemon-select], [class*=pokemon-choice]").length) return "pokemon-select";
+
+    // Priority 14: Game over — require specific game-over element, not just text
+    if (visText(".game-over, [class*=gameover], [class*=game-over]").length) return "gameover";
+
+    // Priority 15: Victory — require specific victory element, not just text
+    if (visText(".victory-screen, [class*=victory], [class*=you-win], [class*=champion-screen]").length) return "victory";
+
+    // Fallback: check for generic game-over/victory text ONLY if no other UI is visible
+    const bodyText = document.body.innerText || "";
+    const hasGameUI = visText(".poke-card, .poke-move, [class*=map-node], button").length > 0;
+    if (!hasGameUI) {
+      if (/game\s*over/i.test(bodyText) && bodyText.length < 500) return "gameover";
+      if (/(?:you\s*win|victory\s*screen|champion\s*title)/i.test(bodyText) && bodyText.length < 500) return "victory";
+    }
 
     return "idle";
   }
