@@ -298,8 +298,10 @@
 
     // ─── GENERIC ACTION BUTTON ───
     const actionBtns = [...document.querySelectorAll("button")].filter(vis).filter(b => {
+      const cls = b.className || "";
+      if (/run-menu|dex-|nav-|btn-icon|history-select|title-footer|title-mode/.test(cls)) return false;
       const t = (b.innerText || "").trim();
-      return t.length > 0 && t.length < 30 && /CONTINUE|NEXT|OK|DONE|CLAIM|COLLECT|PROCEED|CONFIRM|ACCEPT|HEAL|FIGHT/i.test(t);
+      return t.length > 0 && t.length < 30 && /CONTINUE|NEXT|OK|DONE|CLAIM|COLLECT|PROCEED|CONFIRM|ACCEPT|HEAL|FIGHT|NEXT MAP/i.test(t);
     });
     if (actionBtns.length) return "generic-button";
 
@@ -1215,7 +1217,18 @@
         case "pokedex-open": {
           // Close the Pokedex panel that blocks the map
           const closeBtn = document.querySelector(".btn-icon-close");
-          if (closeBtn && vis(closeBtn)) { acted = click(closeBtn); lastAction = "dex:close"; }
+          if (closeBtn && vis(closeBtn)) {
+            closeBtn.click();
+            // Also try synthetic events in case .click() doesn't work
+            try {
+              const r = closeBtn.getBoundingClientRect();
+              const x = r.left + r.width / 2, y = r.top + r.height / 2;
+              const o = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 0, view: window };
+              closeBtn.dispatchEvent(new MouseEvent("click", o));
+            } catch (_) {}
+            acted = true;
+            lastAction = "dex:close";
+          }
           break;
         }
 
