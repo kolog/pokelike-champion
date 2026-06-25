@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pokelike Auto-Champion
 // @namespace    https://lovable.dev/pokelike-autoplay
-// @version      2.0.0
+// @version      2.1.0
 // @description  Autonomous AI agent that plays pokelike.xyz — strategic battle, map routing, memory learning, pokedex farm
 // @match        https://pokelike.xyz/*
 // @match        https://www.pokelike.xyz/*
@@ -155,7 +155,6 @@
     if (!el || !el.getBoundingClientRect) return false;
     const r = el.getBoundingClientRect();
     if (r.width < 3 || r.height < 3) return false;
-    if (r.right < 0 || r.bottom < 0 || r.left > innerWidth || r.top > innerHeight) return false;
     const s = getComputedStyle(el);
     return s.visibility !== "hidden" && s.display !== "none" && parseFloat(s.opacity) > 0.05 && s.pointerEvents !== "none";
   };
@@ -166,9 +165,21 @@
       el.scrollIntoView({ block: "center", behavior: "instant" });
       const r = el.getBoundingClientRect();
       if (r.width < 1 || r.height < 1) return false;
-      // Use native .click() first — works with React event delegation
+      const tag = el.tagName;
+      const isSVG = ["g", "svg", "rect", "circle", "path", "image"].includes(tag);
+      if (isSVG) {
+        // SVG elements: .click() doesn't work, must use dispatchEvent
+        const x = r.left + r.width / 2, y = r.top + r.height / 2;
+        const opts = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 0, view: window };
+        el.dispatchEvent(new PointerEvent("pointerdown", { ...opts, pointerType: "mouse", pointerId: 1 }));
+        el.dispatchEvent(new MouseEvent("mousedown", opts));
+        el.dispatchEvent(new PointerEvent("pointerup", { ...opts, pointerType: "mouse", pointerId: 1 }));
+        el.dispatchEvent(new MouseEvent("mouseup", opts));
+        el.dispatchEvent(new MouseEvent("click", opts));
+        return true;
+      }
+      // DOM elements: .click() first, synthetic events as backup
       el.click();
-      // Also try synthetic events as backup (may fail in Tampermonkey sandbox)
       try {
         const x = r.left + r.width / 2, y = r.top + r.height / 2;
         const opts = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 0, view: window };
@@ -203,6 +214,8 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   function detectState() {
+    const bodyText = document.body.innerText || "";
+
     // ─── TITLE SCREEN ───
     if (visText(".title-mode-card--story").length) return "title";
 
@@ -212,25 +225,44 @@
     // ─── TRAINER SELECT ───
     if (visText(".trainer-card").length) return "trainer-select";
 
-    // ─── STARTER SELECT — 3 poke-cards with moves, no enemy ───
-    const pokeCards = visText(".poke-card");
+    // ─── STARTER SELECT — body text "Choose Your Starter" ───
+    if (/Choose Your Starter|Choose your starter/i.test(bodyText)) return "starter-select";
+
+    // ─── BATTLE — has .poke-move buttons AND "ENEMY" text ───
     const moves = visText(".poke-move");
-    if (pokeCards.length === 3 && moves.length >= 1) {
-      const hasEnemy = visText(".enemy, .opponent, .foe").length > 0;
-      if (!hasEnemy) return "starter-select";
+    if (moves.length >= 1 && /ENEMY/i.test(bodyText)) return "battle";
+
+    // ─── POST-BATTLE — "ENEMY" text + CONTINUE button, no poke-moves ───
+    if (/ENEMY/i.test(bodyText) && moves.length === 0) {
+      const btns = [...document.querySelectorAll("button")].filter(vis);
+      if (btns.some(b => /CONTINUE/i.test((b.innerText || "").trim()))) return "post-battle";
     }
 
-    // ─── BATTLE — has .poke-move buttons AND an enemy ───
-    if (moves.length >= 1) {
-      const hasEnemy = visText(".enemy, .opponent, .foe").length > 0;
-      if (hasEnemy) return "battle";
-    }
+    // ─── GAME OVER — .gameover-title visible ───
+    const go = document.querySelector(".gameover-title");
+    if (go && go.getBoundingClientRect().width > 10 && vis(go)) return "gameover";
+
+    // ─── VICTORY — .win-title visible ───
+    const w = document.querySelector(".win-title");
+    if (w && w.getBoundingClientRect().width > 10 && vis(w)) return "victory";
+
+    // ─── MAP — .map-node elements exist and .map-node--clickable exists ───
+    if (document.querySelector(".map-node--clickable")) return "map";
+
+    // ─── TEAM FULL ───
+    if (/Team Full|Choose.*release/i.test(bodyText)) return "team-full";
+
+    // ─── MOVE TUTOR ───
+    if (/Move Tutor|Teach one/i.test(bodyText)) return "move-tutor";
+
+    // ─── ITEM SELECT / REWARD ───
+    if (/Item Found|Choose one item/i.test(bodyText)) return "item-select";
 
     // ─── EVOLUTION ───
-    if (visText(".evolution, .evolve").length) return "evolution";
-
-    // ─── MAP ───
-    if (visText(".map-node, .encounter, .route-node").length) return "map";
+    if (/evolv|evolution/i.test(bodyText)) {
+      const btns = [...document.querySelectorAll("button")].filter(vis);
+      if (btns.length) return "evolution";
+    }
 
     // ─── SHOP ───
     if (visText(".shop-item, .shop-card").length) return "shop";
@@ -241,42 +273,36 @@
     // ─── TRADE ───
     if (visText(".trade-node, .trade-card").length) return "trade";
 
-    // ─── REWARD ───
-    if (visText(".reward-card, .reward-item").length) return "reward";
+    // ─── DISMISS OVERLAY ───
+    if (/Click anywhere to dismiss/i.test(bodyText)) return "dismiss";
 
-    // ─── ITEM SELECT ───
-    if (visText(".item-option, .item-select").length) return "item-select";
+    // ─── SKIP AVAILABLE ───
+    const skipBtns = [...document.querySelectorAll("button")].filter(vis).filter(b => /SKIP|FLEE/i.test((b.innerText || "").trim()));
+    if (skipBtns.length) return "has-skip";
 
-    // ─── POKEMON SELECT ───
-    if (visText(".pokemon-option, .pokemon-select").length) return "pokemon-select";
-
-    // ─── GAME OVER / VICTORY ───
-    // These elements exist in DOM but are hidden when not active.
-    // They're inside .screen containers — only the active screen is visible.
-    // Check for visible screen containers with these texts.
-    const activeScreens = $$(".screen.active, .screen[style*='display: block'], .screen[style*='display:block']");
-    for (const screen of activeScreens) {
-      const txt = (screen.innerText || "").trim();
-      if (/^GAME OVER/i.test(txt)) return "gameover";
-      if (/CHAMPION|YOU ARE THE/i.test(txt)) return "victory";
-    }
+    // ─── GENERIC ACTION BUTTON ───
+    const actionBtns = [...document.querySelectorAll("button")].filter(vis).filter(b => {
+      const t = (b.innerText || "").trim();
+      return t.length > 0 && t.length < 30 && /CONTINUE|NEXT|OK|DONE|CLAIM|COLLECT|PROCEED|CONFIRM|ACCEPT|HEAL|FIGHT/i.test(t);
+    });
+    if (actionBtns.length) return "generic-button";
 
     return "idle";
   }
 
   // Parse battle state
   function findEnemy() {
-    const sels = [".enemy", ".opponent", ".foe", "[class*=enemy]", "[class*=opponent]", "[class*=foe]"];
-    for (const s of sels) {
-      const el = visText(s)[0];
-      if (el) {
-        const card = el.matches(".poke-card") ? el : el.querySelector(".poke-card") || el;
-        return card;
-      }
-    }
+    // Game uses "ENEMY" text label, not CSS class. Find poke-card in upper half of screen.
     const cards = visText(".poke-card");
     const above = cards.filter(c => c.getBoundingClientRect().top < innerHeight / 2);
-    return above[0] || null;
+    if (above.length) return above[0];
+    // Fallback: any enemy-related selector
+    const sels = [".enemy", ".opponent", ".foe", "[class*=enemy]", "[class*=opponent]"];
+    for (const s of sels) {
+      const el = visText(s)[0];
+      if (el) return el.matches(".poke-card") ? el : el.querySelector(".poke-card") || el;
+    }
+    return null;
   }
 
   function findAlly() {
@@ -500,39 +526,18 @@
   }
 
   function pickMapNode() {
-    const nodes = visText(".map-node, .encounter, .route-node");
-    const available = nodes.filter(n => {
-      const cls = n.className || "";
-      return !/locked|disabled|cleared|completed/i.test(cls);
-    });
-    if (!available.length) return null;
-
-    // Get context
-    const ally = findAlly();
-    const allyHP = parseHP(ally);
-    const runPhase = getRunPhase();
-    const gold = parseGold();
-    const pokedexMissing = getMissingPokemon();
-
-    const ctx = {
-      hpRatio: allyHP.ratio,
-      runPhase,
-      gold,
-      hasLuckyEgg: checkHasItem("lucky egg"),
-      missingEvos: getMissingEvos(),
-      pokedexMissing,
-    };
-
-    const evaluated = available.map(n => ({
-      node: n,
-      ...evaluateNode(n, ctx),
-    })).filter(n => n.score >= 0).sort((a, b) => b.score - a.score);
-
-    if (evaluated.length) {
-      log("map", `best: ${evaluated[0].type} (score: ${evaluated[0].score})`);
-      return evaluated[0].node;
+    // Use .map-node--clickable for reachable nodes (SVG elements)
+    const clickable = document.querySelectorAll(".map-node--clickable");
+    if (clickable.length) {
+      // Pick first clickable node (could add AI scoring later)
+      return clickable[0];
     }
-    return available[0];
+    // Fallback: any visible map node
+    const all = document.querySelectorAll(".map-node");
+    for (const n of all) {
+      if (vis(n)) return n;
+    }
+    return null;
   }
 
   // ── Starter AI ──
@@ -1013,21 +1018,25 @@
 
       switch (state) {
         case "gameover":
-          currentRun.result = "defeat";
-          currentRun.battles = battles;
-          currentRun.deathType = lastAction;
-          memory.addRun(currentRun);
-          memory.analyzeAndLearn();
+          if (currentRun.startTime) {
+            currentRun.result = "defeat";
+            currentRun.battles = battles;
+            currentRun.deathType = lastAction;
+            memory.addRun(currentRun);
+            memory.analyzeAndLearn();
+          }
           save("running", false);
           updateDashboard();
           log("result", "DEFEAT — run saved, learning updated");
           return;
 
         case "victory":
-          currentRun.result = "victory";
-          currentRun.battles = battles;
-          memory.addRun(currentRun);
-          memory.analyzeAndLearn();
+          if (currentRun.startTime) {
+            currentRun.result = "victory";
+            currentRun.battles = battles;
+            memory.addRun(currentRun);
+            memory.analyzeAndLearn();
+          }
           save("running", false);
           updateDashboard();
           log("result", "VICTORY — run saved, learning updated");
@@ -1071,6 +1080,12 @@
           break;
         }
 
+        case "post-battle": {
+          const contBtn = [...document.querySelectorAll("button")].filter(vis).find(b => /CONTINUE/i.test((b.innerText || "").trim()));
+          if (contBtn) acted = click(contBtn);
+          break;
+        }
+
         case "evolution": {
           const evo = pickEvolution();
           if (evo) acted = click(evo);
@@ -1087,7 +1102,6 @@
           const item = pickShopItem();
           if (item) { acted = click(item); lastAction = `shop:${item.innerText?.slice(0, 20)}`; }
           else {
-            // Try to close/continue
             acted = click(findByText("button, [role=button]", /close|continue|done|back|sair/i));
           }
           break;
@@ -1105,24 +1119,46 @@
           break;
         }
 
-        case "reward": {
-          acted = click(findByText("button, [role=button]", /claim|collect|reward|continue|ok|done|prize|pegar|resgatar/i));
+        case "item-select": {
+          // "Item Found! Choose one item to keep" — prefer upgrade button (→), else first item, else SKIP
+          const upgradeBtn = [...document.querySelectorAll("button")].filter(vis).find(b => (b.innerText || "").includes("→"));
+          if (upgradeBtn) { acted = click(upgradeBtn); lastAction = "item:upgrade"; break; }
+          const itemCards = visText(".poke-card");
+          if (itemCards.length) { acted = click(itemCards[0]); lastAction = "item:pick"; break; }
+          acted = click(findByText("button", /SKIP/i));
           if (!acted) acted = click(visText(".btn-primary")[0]);
           break;
         }
 
-        case "item-select": {
-          const item = pickShopItem();
-          if (item) acted = click(item);
-          else acted = click(visText(".btn-primary")[0]);
+        case "team-full": {
+          // "Team Full! Choose a Pokémon to release" — prefer KEEP TEAM AS-IS
+          const keepBtn = [...document.querySelectorAll("button")].filter(vis).find(b => /KEEP TEAM/i.test((b.innerText || "").trim()));
+          if (keepBtn) { acted = click(keepBtn); lastAction = "team:keep"; break; }
+          acted = click(findByText("button", /SKIP|RELEASE|DECLINE/i));
           break;
         }
 
-        case "pokemon-select": {
-          // Pick first available
-          const cards = visText(".poke-card, [class*=pokemon-card]");
-          if (cards.length) acted = click(cards[0]);
-          else acted = click(visText(".btn-primary")[0]);
+        case "move-tutor": {
+          // "Move Tutor — Teach one Pokémon a more powerful move" — pick first upgrade or SKIP
+          const tutorBtn = [...document.querySelectorAll("button")].filter(vis).find(b => (b.innerText || "").includes("→"));
+          if (tutorBtn) { acted = click(tutorBtn); lastAction = "tutor:upgrade"; break; }
+          acted = click(findByText("button", /SKIP/i));
+          break;
+        }
+
+        case "dismiss": {
+          document.body.click();
+          acted = true;
+          break;
+        }
+
+        case "has-skip": {
+          acted = click(findByText("button", /SKIP|FLEE/i));
+          break;
+        }
+
+        case "generic-button": {
+          acted = click(findByText("button", /CONTINUE|NEXT|OK|DONE|CLAIM|COLLECT|PROCEED|CONFIRM|ACCEPT|HEAL|FIGHT/i));
           break;
         }
 
