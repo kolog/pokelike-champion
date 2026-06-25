@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pokelike Auto-Champion
 // @namespace    https://lovable.dev/pokelike-autoplay
-// @version      2.1.0
+// @version      2.1.1
 // @description  Autonomous AI agent that plays pokelike.xyz — strategic battle, map routing, memory learning, pokedex farm
 // @match        https://pokelike.xyz/*
 // @match        https://www.pokelike.xyz/*
@@ -246,8 +246,20 @@
     const w = document.querySelector(".win-title");
     if (w && w.getBoundingClientRect().width > 10 && vis(w)) return "victory";
 
-    // ─── MAP — .map-node elements exist and .map-node--clickable exists ───
-    if (document.querySelector(".map-node--clickable")) return "map";
+    // ─── TRADE OFFER ───
+    if (/Trade Offer|Trade one of your/i.test(bodyText) && /DECLINE/i.test(bodyText)) return "trade-offer";
+
+    // ─── BADGE EARNED ───
+    if (/Badge Earned|earned the.*Badge/i.test(bodyText) && /NEXT MAP/i.test(bodyText)) return "badge-earned";
+
+    // ─── MAP — .map-node--clickable exists AND the map SVG has actual dimensions ───
+    if (document.querySelector(".map-node--clickable")) {
+      const svg = document.querySelector("svg");
+      if (svg) {
+        const r = svg.getBoundingClientRect();
+        if (r.width > 50 && r.height > 50) return "map";
+      }
+    }
 
     // ─── TEAM FULL ───
     if (/Team Full|Choose.*release/i.test(bodyText)) return "team-full";
@@ -529,7 +541,31 @@
     // Use .map-node--clickable for reachable nodes (SVG elements)
     const clickable = document.querySelectorAll(".map-node--clickable");
     if (clickable.length) {
-      // Pick first clickable node (could add AI scoring later)
+      // Skip move-tutor nodes (they open panels, not battles)
+      // Prefer: trainer > battle > grass > pokeball > item > anything else
+      const PRIORITY = ["trainer", "bug-catcher", "hiker", "battle", "grass", "wild", "pokeball", "item", "mystery"];
+      let best = null;
+      let bestScore = -1;
+      for (const node of clickable) {
+        const img = node.querySelector("image");
+        const href = img ? (img.getAttribute("href") || "") : "";
+        const name = href.split("/").pop().replace(".png", "").replace(".svg", "");
+        // Skip move-tutor and trade nodes (they open panels)
+        if (/move-tutor|trade/i.test(name)) continue;
+        let score = 0;
+        for (let i = 0; i < PRIORITY.length; i++) {
+          if (name.includes(PRIORITY[i])) { score = PRIORITY.length - i; break; }
+        }
+        if (score > bestScore) { bestScore = score; best = node; }
+      }
+      if (best) return best;
+      // Fallback: first clickable that isn't move-tutor
+      for (const node of clickable) {
+        const img = node.querySelector("image");
+        const href = img ? (img.getAttribute("href") || "") : "";
+        if (!/move-tutor|trade/i.test(href)) return node;
+      }
+      // Last resort: any clickable
       return clickable[0];
     }
     // Fallback: any visible map node
@@ -1089,6 +1125,26 @@
         case "evolution": {
           const evo = pickEvolution();
           if (evo) acted = click(evo);
+          break;
+        }
+
+        case "trade-offer": {
+          // Prefer accept if trade is beneficial, else decline
+          const acceptBtn = [...document.querySelectorAll("button")].filter(vis).find(b => /ACCEPT|TRADE|CONFIRM/i.test((b.innerText || "").trim()));
+          const declineBtn = [...document.querySelectorAll("button")].filter(vis).find(b => /DECLINE|SKIP|REJECT/i.test((b.innerText || "").trim()));
+          if (cfg.preferTrades && acceptBtn) {
+            acted = click(acceptBtn);
+            lastAction = "trade:accept";
+          } else if (declineBtn) {
+            acted = click(declineBtn);
+            lastAction = "trade:decline";
+          }
+          break;
+        }
+
+        case "badge-earned": {
+          const nextBtn = [...document.querySelectorAll("button")].filter(vis).find(b => /NEXT MAP|NEXT|CONTINUE/i.test((b.innerText || "").trim()));
+          if (nextBtn) acted = click(nextBtn);
           break;
         }
 
