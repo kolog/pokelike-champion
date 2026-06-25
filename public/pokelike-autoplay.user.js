@@ -285,6 +285,10 @@
     // ─── TRADE ───
     if (visText(".trade-node, .trade-card").length) return "trade";
 
+    // ─── POKEDEX PANEL OPEN (blocks map) ───
+    const dexClose = document.querySelector(".btn-icon-close");
+    if (dexClose && vis(dexClose) && document.querySelector(".dex-tab.active")) return "pokedex-open";
+
     // ─── DISMISS OVERLAY ───
     if (/Click anywhere to dismiss/i.test(bodyText)) return "dismiss";
 
@@ -1205,6 +1209,13 @@
         case "dismiss": {
           document.body.click();
           acted = true;
+          break;
+        }
+
+        case "pokedex-open": {
+          // Close the Pokedex panel that blocks the map
+          const closeBtn = document.querySelector(".btn-icon-close");
+          if (closeBtn && vis(closeBtn)) { acted = click(closeBtn); lastAction = "dex:close"; }
           break;
         }
 
