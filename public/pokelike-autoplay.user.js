@@ -252,12 +252,13 @@
     // ─── BADGE EARNED ───
     if (/Badge Earned|earned the.*Badge/i.test(bodyText) && /NEXT MAP/i.test(bodyText)) return "badge-earned";
 
-    // ─── MAP — .map-node--clickable exists AND the map SVG has actual dimensions ───
+    // ─── MAP — .map-node--clickable exists AND has actual visible dimensions ───
     if (document.querySelector(".map-node--clickable")) {
-      const svg = document.querySelector("svg");
-      if (svg) {
-        const r = svg.getBoundingClientRect();
-        if (r.width > 50 && r.height > 50) return "map";
+      // Check if any clickable node is actually visible (not hidden behind overlays)
+      const firstClickable = document.querySelector(".map-node--clickable");
+      if (firstClickable) {
+        const r = firstClickable.getBoundingClientRect();
+        if (r.width > 10 && r.height > 10) return "map";
       }
     }
 
