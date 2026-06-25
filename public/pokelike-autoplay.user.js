@@ -198,18 +198,16 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   function detectState() {
-    // ─── EXACT CLASS SELECTORS ONLY (no substring matching) ───
-
-    // Title screen
+    // ─── TITLE SCREEN ───
     if (visText(".title-mode-card--story").length) return "title";
 
-    // Region select
+    // ─── REGION SELECT ───
     if (visText(".history-region-btn").length) return "region-select";
 
-    // Trainer select
+    // ─── TRAINER SELECT ───
     if (visText(".trainer-card").length) return "trainer-select";
 
-    // Starter select — 3 poke-cards with moves, no enemy
+    // ─── STARTER SELECT — 3 poke-cards with moves, no enemy ───
     const pokeCards = visText(".poke-card");
     const moves = visText(".poke-move");
     if (pokeCards.length === 3 && moves.length >= 1) {
@@ -217,45 +215,46 @@
       if (!hasEnemy) return "starter-select";
     }
 
-    // Battle — has .poke-move buttons AND an enemy present
+    // ─── BATTLE — has .poke-move buttons AND an enemy ───
     if (moves.length >= 1) {
       const hasEnemy = visText(".enemy, .opponent, .foe").length > 0;
       if (hasEnemy) return "battle";
     }
 
-    // Evolution
+    // ─── EVOLUTION ───
     if (visText(".evolution, .evolve").length) return "evolution";
 
-    // Map
+    // ─── MAP ───
     if (visText(".map-node, .encounter, .route-node").length) return "map";
 
-    // Shop
+    // ─── SHOP ───
     if (visText(".shop-item, .shop-card").length) return "shop";
 
-    // Heal
+    // ─── HEAL ───
     if (visText(".heal-node, .pokemon-center").length) return "heal";
 
-    // Trade
+    // ─── TRADE ───
     if (visText(".trade-node, .trade-card").length) return "trade";
 
-    // Reward
+    // ─── REWARD ───
     if (visText(".reward-card, .reward-item").length) return "reward";
 
-    // Item select
+    // ─── ITEM SELECT ───
     if (visText(".item-option, .item-select").length) return "item-select";
 
-    // Pokemon select
+    // ─── POKEMON SELECT ───
     if (visText(".pokemon-option, .pokemon-select").length) return "pokemon-select";
 
-    // Game over — EXACT class only
-    if (visText(".game-over").length) return "gameover";
-
-    // Victory — EXACT class only
-    if (visText(".victory-screen").length) return "victory";
-
-    // ─── NO TEXT MATCHING, NO SUBSTRING MATCHING ───
-    // Victory/gameover are ONLY detected by exact CSS classes above.
-    // If none match, we're in an unknown or idle state.
+    // ─── GAME OVER / VICTORY ───
+    // These elements exist in DOM but are hidden when not active.
+    // They're inside .screen containers — only the active screen is visible.
+    // Check for visible screen containers with these texts.
+    const activeScreens = $$(".screen.active, .screen[style*='display: block'], .screen[style*='display:block']");
+    for (const screen of activeScreens) {
+      const txt = (screen.innerText || "").trim();
+      if (/^GAME OVER/i.test(txt)) return "gameover";
+      if (/CHAMPION|YOU ARE THE/i.test(txt)) return "victory";
+    }
 
     return "idle";
   }
@@ -496,7 +495,7 @@
   }
 
   function pickMapNode() {
-    const nodes = visText("[class*=map-node], [class*=encounter], [class*=route]");
+    const nodes = visText(".map-node, .encounter, .route-node");
     const available = nodes.filter(n => {
       const cls = n.className || "";
       return !/locked|disabled|cleared|completed/i.test(cls);
@@ -573,7 +572,7 @@
 
   // ── Evolution AI ──
   function pickEvolution() {
-    const opts = visText("[class*=evolution-option], [class*=evolve-option], .poke-card").filter(e => e.querySelector("img"));
+    const opts = visText(".evolution-option, .evolve-option, .poke-card").filter(e => e.querySelector("img"));
     if (!opts.length) {
       // Try confirm/accept buttons
       return findByText("button", /accept|evolve|confirm|yes/i);
@@ -586,7 +585,7 @@
 
   // ── Shop AI ──
   function pickShopItem() {
-    const items = visText(".shop-item, [class*=item-card], [class*=shop] button, [class*=shop] [role=button]");
+    const items = visText(".shop-item, .item-card, .shop button, .shop [role=button]");
     if (!items.length) return null;
 
     const scored = items.map(item => {
@@ -615,7 +614,7 @@
   // ── Helpers ──
   function getRunPhase() {
     // Try to detect how far we are in the run
-    const badges = visText("[class*=badge]").length;
+    const badges = visText(".badge").length;
     if (badges <= 2) return "early";
     if (badges <= 5) return "mid";
     return "late";
